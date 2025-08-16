@@ -1,10 +1,9 @@
-import { compare } from "bcryptjs";
 import { mailSend } from "../../services/mailer.js";
 import { hashedPassword, comparePassword } from "../../utils/bcrypt.js";
 import { generateOTP, generateToken } from "../../utils/token.js";
 import UserModel from "./user.model.js";
 
-const register = async (req, res) => {
+const register = async (req, res, next) => {
   try {
     const { name, email, password, roles } = req.body;
     if (!email || !password) {
@@ -45,13 +44,18 @@ const register = async (req, res) => {
       Data: rest,
     });
   } catch (error) {
-    res
-      .status(400)
-      .json({ message: "Failed to register user", err: error.message });
+    next(error);
   }
 };
-
-const verifyEmail = async (req, res) => {
+const getUsers = async (req, res, next) => {
+  try {
+    const users = await UserModel.find().select("-password");
+    res.status(200).json({ message: "All users list", data: users });
+  } catch (error) {
+    next(error);
+  }
+};
+const verifyEmail = async (req, res, next) => {
   try {
     const { email, token } = req.body;
     if (!email || !token) {
@@ -77,12 +81,11 @@ const verifyEmail = async (req, res) => {
     }
     res.status(200).json({ message: "Email is verified successfully" });
   } catch (error) {
-    console.error("Email verification error:", error);
-    res.status(500).json({ message: "Email verification failed" });
+    next(error);
   }
 };
 
-const login = async (req, res) => {
+const login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) {
@@ -104,8 +107,92 @@ const login = async (req, res) => {
       token: accessToken,
     });
   } catch (error) {
-    console.error("Login Error:", error);
-    res.status(500).json({ message: "Login failed" });
+    next(error);
   }
 };
-export { register, verifyEmail, login };
+const forgetPassword = async (req, res, next) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ message: "Email is required" });
+    }
+
+    const user = await UserModel.findOne({
+      email,
+      isActive: true,
+      isEmailVerified: true,
+    });
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ message: "User not found or not verified" });
+    }
+
+    const resetToken = generateOTP();
+    const updatedUser = await UserModel.updateOne(
+      { email },
+      { token: resetToken }
+    );
+
+    if (updatedUser.modifiedCount === 0) {
+      throw new Error("Failed to update token");
+    }
+
+    await mailSend({
+      to: user.email,
+      subject: "Password Reset Request - BlogQuill",
+      message: `
+        <p>Dear ${user.name || user.email},</p>
+        <p>Your OTP for resetting your password is <strong>${resetToken}</strong></p>
+        <p>Happy blogging!</p>
+      `,
+    });
+
+    res.json({ message: "OTP sent to your email" });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const verifyForgetPw = async (req, res, next) => {
+  try {
+    const { email, token, password: newPassword } = req.body;
+
+    if (!email || !token || !newPassword) {
+      return res
+        .status(400)
+        .json({ message: "Email, token, and new password are required" });
+    }
+    const user = await UserModel.findOne({
+      email,
+      isActive: true,
+      isEmailVerified: true,
+    });
+    if (!user) throw new Error("User not found");
+    const isValidToken = user.token == token;
+    if (!isValidToken) throw new Error("Token is invalid");
+    const hashesPas = hashedPassword(String(newPassword));
+    const updatedUser = await UserModel.updateOne(
+      { email },
+      { password: hashesPas, token: "" }
+    );
+    if (updatedUser.modifiedCount === 0) {
+      throw new Error("Failed to update the user");
+    }
+    res
+      .status(200)
+      .json({ message: "Password reset successful", data: updatedUser });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export {
+  register,
+  verifyEmail,
+  login,
+  forgetPassword,
+  getUsers,
+  verifyForgetPw,
+};

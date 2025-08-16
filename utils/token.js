@@ -7,4 +7,6 @@ const generateToken = (Payload) => {
     expiresIn: process.env.TOKEN_DURATION,
   });
 };
-export { generateOTP, generateToken };
+
+const verifyJWT = (token) => jwt.verify(token, process.env.JWT_SECRET);
+export { generateOTP, generateToken, verifyJWT };
